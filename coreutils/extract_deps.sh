@@ -26,7 +26,7 @@ while IFS= read -r line; do
     if [ -z "$c_source_filepath" ]; then
         continue
     fi
-    cp -f "$c_source_filepath" -t "$CORPUS_DIR/$OUT_DIR/"
+    cp -f "$c_source_filepath" -t "$CORPUS_DIR/$OUT_DIR"
     c_source_filepaths+=( "$c_source_filepath" )
 done < <(nm -a src/$PROG_NAME | grep ".*\.c$")
 
@@ -51,7 +51,7 @@ for filepath in "${c_source_filepaths[@]}"; do
     fi
     readarray -t header_files <<< \
         "$(grep -E '^[^/][^:]+/[^:]+:$' "$deps_filepath" | sed 's/:$//' | sort | uniq)"
-    cp -f "${header_files[@]}" -t "$CORPUS_DIR/$OUT_DIR/" &> /dev/null
+    cp -f "${header_files[@]}" -t "$CORPUS_DIR/$OUT_DIR"
 done
 
 # Create the makefile
