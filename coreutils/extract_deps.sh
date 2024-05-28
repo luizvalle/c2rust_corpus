@@ -27,7 +27,7 @@ while IFS= read -r line; do
         continue
     fi
     cp -f "$c_source_filepath" -t "$CORPUS_DIR/$OUT_DIR/"
-    ce_filepaths+=( "$c_source_filepath" )
+    c_source_filepaths+=( "$c_source_filepath" )
 done < <(nm -a src/$PROG_NAME | grep ".*\.c$")
 
 # Extract the .h files
@@ -51,5 +51,26 @@ for filepath in "${c_source_filepaths[@]}"; do
     fi
     readarray -t header_files <<< \
         "$(grep -E '^[^/][^:]+/[^:]+:$' "$deps_filepath" | sed 's/:$//' | sort | uniq)"
-    cp -f "${header_files[@]}" -t "$CORPUS_DIR/$OUT_DIR/"
+    cp -f "${header_files[@]}" -t "$CORPUS_DIR/$OUT_DIR/" &> /dev/null
 done
+
+# Create the makefile
+cd $CORPUS_DIR
+echo "\
+CFLAGS=-I./
+SRCS := \$(wildcard *.c)
+OBJS := \$(SRCS:.c=.o)
+
+.PHONY: all
+all: clean echo
+
+$PROG_NAME: \$(OBJS)
+	gcc $^ -o \$@
+
+%.o: %.c
+	gcc \$(CFLAGS) -c $< -o \$@
+
+.PHONY: clean
+clean:
+	rm -rf \$(OBJS) $PROG_NAME
+" > $OUT_DIR/Makefile
