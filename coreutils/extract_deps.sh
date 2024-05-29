@@ -18,8 +18,8 @@ cd $COREUTILS_DIR
 #make -s $PROG_DIR/$PROG_NAME &> /dev/null  # Silence the output
 
 # Extract the .c files
-echoerr "Copying the .c files to $OUT_DIR..."
-c_source_filepaths=()
+echoerr "Copying the .c files to $CORPUS_DIR/$OUT_DIR..."
+c_files=()
 while IFS= read -r line; do
     c_source_file="$(echo "$line" | awk '{print $3}')"
     c_source_filepath=$(find ./ -type f -name "$c_source_file" | head -n 1)
@@ -27,15 +27,16 @@ while IFS= read -r line; do
         continue
     fi
     cp -f "$c_source_filepath" -t "$CORPUS_DIR/$OUT_DIR"
-    c_source_filepaths+=( "$c_source_filepath" )
+    c_files+=( "$c_source_filepath" )
 done < <(nm -a src/$PROG_NAME | grep ".*\.c$")
 
 # Extract the .h files
-echoerr "Copying the .h files to $OUT_DIR..."
-for filepath in "${c_source_filepaths[@]}"; do
-    directory=${filepath#./}  # Remove the leading './'
+echoerr "Copying the .h files to $CORPUS_DIR/$OUT_DIR..."
+header_files=()
+for c_filepath in "${c_files[@]}"; do
+    directory=${c_filepath#./}  # Remove the leading './'
     directory=${directory%/*}
-    filename=${filepath##*/}
+    filename=${c_filepath##*/}
     filename=${filename%%.*}  # Remove extension (e.g. .c and .h)
     if [ "$directory" = "gnulib/lib" ]; then
         deps_filepath="./lib/.deps/libcoreutils_a-$filename.Po"
@@ -49,12 +50,32 @@ for filepath in "${c_source_filepaths[@]}"; do
         echoerr "Dependency file $deps_filepath does not exist"
         exit 1
     fi
-    readarray -t header_files <<< \
-        "$(grep -E '^[^/][^:]+/[^:]+:$' "$deps_filepath" | sed 's/:$//' | sort | uniq)"
-    cp -f "${header_files[@]}" -t "$CORPUS_DIR/$OUT_DIR"
+    readarray -t cur_header_files <<< \
+        "$(grep -E '^[^/][^:]+/[^:]+:$' "$deps_filepath" | sed 's/:$//' | sort -u)"
+    header_files=( "${header_files[@]}" "${cur_header_files[@]}" )
+done
+
+header_files=($(printf "%s\n" "${header_files[@]}" | sort -u))  # Get unique files
+cp -f "${header_files[@]}" -t "$CORPUS_DIR/$OUT_DIR"
+
+# Include possibly missing .c files
+#
+# Some .h files are included in corresponding .c files which define macros that
+# cause the correct version of the functions to be defined from the #ifndef
+# blocks
+echoerr "Copying the remaining .c files to $CORPUS_DIR/$OUT_DIR..."
+for header_file in "${header_files[@]}"; do
+    filename="${header_file##*/}"
+    filename="${filename%.h}"
+    c_file=$(find ./ -type f -name "$filename.c" | head -n 1)
+    if [ -z "$c_file" ]; then
+        continue
+    fi
+    cp -f "$c_file" -t "$CORPUS_DIR/$OUT_DIR"
 done
 
 # Create the makefile
+echoerr "Creating the Makefile in $CORPUS_DIR/$OUT_DIR..."
 cd $CORPUS_DIR
 echo "\
 CFLAGS=-I./
