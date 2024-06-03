@@ -60,11 +60,6 @@ map_symbols_to_dependencies() {
     done
 }
 
-#echoerr "Making $PROG_NAME..."
-#
-#make -s clean &> /dev/null
-#make -s --directory=$COREUTILS_DIR $PROG_DIR/$PROG_NAME -j 6 &> /dev/null
-
 echoerr "Creating the $C_DIR directory..."
 rm -rf "$C_DIR"
 mkdir -p "$C_DIR"
@@ -94,15 +89,9 @@ echoerr "Copying $MAIN_SOURCE_FILE and the header files for it..."
 main_header_files=($(get_headers "$MAIN_SOURCE_FILE"))
 cd "$COREUTILS_DIR"
 cp -f "$MAIN_SOURCE_FILE" "${main_header_files[@]}" -t "$C_DIR"
-cd -
+cd - &> /dev/null
 
 echoerr "Mapping symbols in coreutils to their dependencies..."
-#while IFS=: read -r sym deps; do
-#    symbol_to_deps["$sym"]="$deps"
-#done <<< "$(map_symbols_to_dependencies "$COREUTILS_DIR/lib")"
-#while IFS=: read -r sym deps; do
-#    symbol_to_deps["$sym"]="$deps"
-#done <<< "$(map_symbols_to_dependencies "$COREUTILS_DIR/src")"
 echoerr "\tMapping $COREUTILS_DIR/lib..."
 lib_syms_map="$(map_symbols_to_dependencies "$COREUTILS_DIR/lib")"
 echoerr "\tMapping $COREUTILS_DIR/src..."
@@ -135,8 +124,6 @@ while [ 1 ]; do
     done
 done
 
-echoerr "Successfully built the C version of $PROG_NAME in $C_DIR"
-
-echoerr "Creating the Rust version of $PROG_NAME..."
+echoerr "Successfully built the C version of $PROG_NAME in $C_DIR!"
 
 echoerr "Done!"
