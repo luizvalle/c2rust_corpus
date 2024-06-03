@@ -6,6 +6,7 @@ PROG_NAME=echo
 
 PROG_DIR="$CORPUS_DIR/$PROG_NAME"
 C_DIR="$PROG_DIR/c"
+RUST_DIR="$PROG_DIR/rust"
 
 echoerr() { printf "$@\n" 1>&2;  }
 
@@ -66,7 +67,7 @@ mkdir -p "$C_DIR"
 
 echoerr "Creating the Makefile in $C_DIR"
 echo "\
-CFLAGS=-I./
+CFLAGS=-I./ -g
 SRCS := \$(wildcard *.c)
 OBJS := \$(SRCS:.c=.o)
 
@@ -124,6 +125,71 @@ while [ 1 ]; do
     done
 done
 
+
 echoerr "Successfully built the C version of $PROG_NAME in $C_DIR!"
+
+echoerr "Creating the JSON database file for C2Rust..."
+sb_install_msg="$(pip install scan-build 2>&1)"
+if [ $? -ne 0 ]; then
+    echoerr "\tError: Chould not install scan-build, which is used to create the compilation database: $sb_install_msg"
+    exit 1
+fi
+make -s --directory="$C_DIR" clean
+COMPILATION_DB_FILEPATH="$C_DIR/compile_commands.json"
+
+ib_msg="$(intercept-build --cdb "$COMPILATION_DB_FILEPATH" make -s --directory="$C_DIR" "$PROG_NAME" 2>&1)"
+if [ $? -ne 0 ]; then
+    echoerr "\tError: Could not create the compilation database: $ib_msg"
+    exit 1
+fi
+make -s --directory="$C_DIR" clean &> /dev/null
+
+echoerr "Installing C2Rust, you may need to provide your password..."
+c2r_deps_install_msg="$(sudo apt install build-essential llvm clang libclang-dev cmake libssl-dev pkg-config python3 git 2>&1)"
+if [ $? -ne 0 ]; then
+    echoerr "\tError: Could not install the dependencies for C2Rust: $c2r_deps_install_msg"
+    exit 1
+fi
+c2r_install_msg="$(cargo install c2rust 2>&1)"
+if [ $? -ne 0 ]; then
+    echoerr "\tError: Could not install C2Rust: $c2r_install_msg"
+fi
+
+echoerr "Transpiling the C code to Rust and placing it in $RUST_DIR..."
+rm -rf "$RUST_DIR"
+c2r_msg="$(c2rust transpile \
+    --binary "$PROG_NAME" \
+    --overwrite-existing \
+    --output-dir="$RUST_DIR" \
+    "$COMPILATION_DB_FILEPATH" 2>&1)"
+if [ $? -ne 0 ]; then
+    echoerr "\tError: Could not transpile the C code: $c2r_msg"
+    exit 1
+fi
+find "$RUST_DIR/src" \
+    -type f \
+    -exec sed -i -E ':a;N;$!ba;s/compile_error!\("Conditional expression is not supposed to be used"\)//g' {} +
+cd "$RUST_DIR"
+cf_msg="$(cargo fix \
+    -Z unstable-options \
+    --keep-going \
+    --broken-code \
+    --allow-no-vcs \
+    --allow-dirty \
+    --allow-staged \
+    --quiet 2>&1)"
+if [ $? -ne 0 ]; then
+    echoerr "\tError: Could not fix the errors in the Rust code: $cf_msg"
+    exit 1
+fi
+cb_msg="$(cargo build 2>&1)"
+if [ $? -ne 0 ]; then
+    echoerr "\tError: Building the Rust version failed: $cb_msg"
+    exit 1
+fi
+cargo clean &> /dev/null
+cd - &> /dev/null
+
+echoerr "Successfully built the Rust version of $PROG_NAME in $RUST_DIR!"
 
 echoerr "Done!"
