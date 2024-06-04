@@ -11,29 +11,22 @@ RUST_DIR="$PROG_DIR/rust"
 
 echoerr() { printf "$@\n" 1>&2;  }
 
-get_headers() {
-    local c_filepath="$1"
-    directory="${c_filepath%/*}"
-    directory="${directory##*/}"
-    filename=${c_filepath##*/}
-    filename=${filename%%.*}  # Remove extension (e.g. .c and .h)
-    if [ "$directory" = "gnulib/lib" ]; then
-        deps_filepath="$COREUTILS_DIR/lib/.deps/libcoreutils_a-$filename.Po"
-    elif [ "$directory" = "src" ]; then
-        deps_filepath="$COREUTILS_DIR/src/.deps/$filename.Po"
-    else
-        echoerr "Warning: File in an unknown directory: '$filepath'"
-        echo ""
-        return
-    fi
+get_deps() {
+    local filepath="$1"
+    dir="${filepath%/*}"
+    deps_filename="${filepath##*/}"
+    deps_filename="${deps_filename%.*}"
+    deps_filepath="$dir/.deps/$deps_filename.Po"
     if [ ! -e "$deps_filepath" ]; then
-        echoerr "Warning: Dependency file $deps_filepath does not exist, skipping..."
-        echo ""
-        return
+        echoerr "\tError: Could not find the dependency file '$deps_filepath'"
+        exit 1
     fi
-    readarray -t header_files <<< \
-        "$(grep -E '^[^/][^:]+/[^:]+:$' "$deps_filepath" | sed 's/:$//' | sort -u)"
-    echo "$(printf "%s\n" "${header_files[@]}" | sed '${/^$/d}' | sort -u)"
+    deps="$(cat "$deps_filepath" | sed -E 's/[^[:space:]]+/&\n/g')"
+    deps="$(echo "$deps" | sed '/^$/d')"
+    deps="$(echo "$deps" | sed -E '/^\s*\//d; /:$/d; /\\/d')"
+    deps="$(echo "$deps" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+    deps="$(echo "$deps" | sort -u | sed "s@^@$COREUTILS_DIR/@" | tr '\n' ' ')"
+    echo "${deps[@]}"
 }
 
 map_symbols_to_dependencies() {
@@ -43,22 +36,24 @@ map_symbols_to_dependencies() {
         if [ ${#syms[@]} -eq 0 ]; then
             continue
         fi
-        dir="${object_filepath%/*}"
-        object_file_name="${object_filepath##*/}"
-        object_file_name="${object_file_name%.o}"
-        deps_filepath="$dir/.deps/$object_file_name.Po"
-        if [ ! -e "$deps_filepath" ]; then
-            echoerr "\tError: Could not find the dependency file '$deps_filepath'"
-            exit 1
-        fi
-        deps="$(cat "$deps_filepath" | sed -E 's/[^[:space:]]+/&\n/g')"
-        deps="$(echo "$deps" | sed '/^$/d')"
-        deps="$(echo "$deps" | sed -E '/^\s*\//d; /:$/d; /\\/d')"
-        deps="$(echo "$deps" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
-        deps="$(echo "$deps" | sort -u | sed "s@^@$COREUTILS_DIR/@" | tr '\n' ' ')"
+        deps="$(get_deps "$object_filepath")"
         for sym in "${syms[@]}"; do
             echo "$sym:$deps"
         done
+    done
+}
+
+copy_files() {
+    local filepaths=($@)
+    for filepath in "${filepaths[@]}"; do
+        if [[ "$filepath" =~ (lib|src)/([^/]+)/ ]]; then
+            # Deal with subdirs like lib/sys
+            dest_dir="$C_DIR/${BASH_REMATCH[2]}"
+            mkdir -p "$dest_dir"
+        else
+            dest_dir="$C_DIR"
+        fi
+        cp -f "$filepath" -t "$dest_dir"
     done
 }
 
@@ -93,7 +88,8 @@ clean:
 
 MAIN_SOURCE_FILE="$COREUTILS_DIR/src/$PROG_NAME.c"
 echoerr "Copying $MAIN_SOURCE_FILE and the header files for it..."
-main_header_files=($(get_headers "$MAIN_SOURCE_FILE"))
+main_deps=($(get_deps "$MAIN_SOURCE_FILE"))
+copy_files "${main_deps[@]}"
 cd "$COREUTILS_DIR"
 cp -f "$MAIN_SOURCE_FILE" "${main_header_files[@]}" -t "$C_DIR"
 cd - &> /dev/null
@@ -124,13 +120,12 @@ while [ 1 ]; do
     for missing_symbol in "${missing_symbols[@]}"; do
         deps=(${symbol_to_deps["$missing_symbol"]})
         if [ ${#deps[@]} -eq 0 ]; then
-            echoerr "\tError: Did not find dependencies for the missing symbol '$missing_symbol'"
-            exit 1
+            echoerr "\tWarning: Did not find dependencies for the missing symbol '$missing_symbol'"
+            continue
         fi
-        cp -f "${deps[@]}" -t "$C_DIR"
+        copy_files "${deps[@]}"
     done
 done
-
 
 echoerr "Successfully built the C version of $PROG_NAME in $C_DIR!"
 
