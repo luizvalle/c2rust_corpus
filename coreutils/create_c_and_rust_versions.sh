@@ -1,8 +1,9 @@
 #!/bin/bash
+PROG_NAME=$1
+
 CORPUS_DIR=$(pwd)
 COREUTILS_DIR=/tmp/coreutils
 PROG_DIR=src
-PROG_NAME=echo
 
 PROG_DIR="$CORPUS_DIR/$PROG_NAME"
 C_DIR="$PROG_DIR/c"
@@ -61,6 +62,11 @@ map_symbols_to_dependencies() {
     done
 }
 
+if [ -z "$PROG_NAME" ]; then
+    echoerr "Usage: $0 <program_name>"
+    exit 1
+fi
+
 echoerr "Creating the $C_DIR directory..."
 rm -rf "$C_DIR"
 mkdir -p "$C_DIR"
@@ -72,7 +78,7 @@ SRCS := \$(wildcard *.c)
 OBJS := \$(SRCS:.c=.o)
 
 .PHONY: all
-all: clean echo
+all: clean $PROG_NAME
 
 $PROG_NAME: \$(OBJS)
 	gcc $^ -o \$@
@@ -158,7 +164,7 @@ fi
 echoerr "Transpiling the C code to Rust and placing it in $RUST_DIR..."
 rm -rf "$RUST_DIR"
 c2r_msg="$(c2rust transpile \
-    --binary "$PROG_NAME" \
+    --binary $PROG_NAME \
     --overwrite-existing \
     --output-dir="$RUST_DIR" \
     "$COMPILATION_DB_FILEPATH" 2>&1)"
@@ -166,13 +172,15 @@ if [ $? -ne 0 ]; then
     echoerr "\tError: Could not transpile the C code: $c2r_msg"
     exit 1
 fi
+sed -i 's/^\(#!\[allow([^\)]*\))/\1, unused_imports)/' "$RUST_DIR/src/$PROG_NAME.rs"
 find "$RUST_DIR/src" \
     -type f \
-    -exec sed -i -E ':a;N;$!ba;s/compile_error!\("Conditional expression is not supposed to be used"\)//g' {} +
+    -exec perl -0777 -pi -e 's/compile_error!\((.|\n)*?\)//g' {} +
 cd "$RUST_DIR"
 cf_msg="$(cargo fix \
     -Z unstable-options \
     --keep-going \
+    --no-default-features \
     --broken-code \
     --allow-no-vcs \
     --allow-dirty \
