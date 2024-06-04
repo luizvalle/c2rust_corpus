@@ -127,6 +127,13 @@ while [ 1 ]; do
     done
 done
 
+
+echoerr "Trying to make the C version..."
+make_msg="$(make --directory="$C_DIR" "$PROG_NAME" -i 2>&1)"
+if [ $? -ne 0 ]; then
+    echoerr "Error: Could not build the C version: $make_msg"
+    exit 1
+fi
 echoerr "Successfully built the C version of $PROG_NAME in $C_DIR!"
 
 echoerr "Creating the JSON database file for C2Rust..."
