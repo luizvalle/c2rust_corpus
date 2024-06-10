@@ -46,8 +46,8 @@ map_symbols_to_dependencies() {
 copy_files() {
     local filepaths=($@)
     for filepath in "${filepaths[@]}"; do
-        if [[ "$filepath" =~ (lib|src)/([^/]+)/ ]]; then
-            # Deal with subdirs like lib/sys
+        if [[ "$filepath" =~ /(lib|src)/([^/]+)/ ]]; then
+            # Deal with subdirs of lib/sys
             dest_dir="$C_DIR/${BASH_REMATCH[2]}"
             mkdir -p "$dest_dir"
         else
@@ -109,14 +109,28 @@ done <<< "$syms_map"
 echoerr "Copying the remaining .c and .h files..."
 i=1
 while [ 1 ]; do
-    make_output="$(make --directory="$C_DIR" "$PROG_NAME" -i 2>&1)"
+    make_output="$(make --directory="$C_DIR" "$PROG_NAME" 2>&1)"
     missing_symbols=($(echo "$make_output" \
         | sed -n "s/.*undefined reference to \`\(.*\)'.*/\1/p"))
-    num_missing_symbols=${#missing_symbols}
-    if [ $num_missing_symbols -eq 0 ]; then
+    missing_files=($(echo "$make_output" \
+        | sed -n "s/.* \(.*\): No such file or directory.*/\1/p"))
+    num_missing_symbols=${#missing_symbols[@]}
+    num_missing_files=${#missing_files[@]}
+    echoerr "\tIteration $((i++)):"
+    echoerr "\t\tNumber of missing symbols: $num_missing_symbols"
+    echoerr "\t\tNumber of missing files: $num_missing_files"
+    if [ $num_missing_symbols -eq 0 ] && [ $num_missing_files -eq 0 ]; then
         break
     fi
-    echoerr "\tIteration $((i++)): Number of missing symbols: $num_missing_symbols"
+    if [ $num_missing_files -gt 0 ]; then
+        for file in "${missing_files[@]}"; do
+            filepath="$(find $COREUTILS_DIR -type f -name "$file" | head -n 1)"
+            if [ ! -e "$filepath" ]; then
+                continue
+            fi
+            copy_files "$filepath"
+        done
+    fi
     for missing_symbol in "${missing_symbols[@]}"; do
         deps=(${symbol_to_deps["$missing_symbol"]})
         if [ ${#deps[@]} -eq 0 ]; then
@@ -129,7 +143,7 @@ done
 
 
 echoerr "Trying to make the C version..."
-make_msg="$(make --directory="$C_DIR" "$PROG_NAME" -i 2>&1)"
+make_msg="$(make --directory="$C_DIR" "$PROG_NAME" 2>&1)"
 if [ $? -ne 0 ]; then
     echoerr "Error: Could not build the C version: $make_msg"
     exit 1
