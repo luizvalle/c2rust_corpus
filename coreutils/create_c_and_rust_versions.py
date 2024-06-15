@@ -288,8 +288,8 @@ def main():
             deps = syms_to_deps[missing_symbol]
             if not deps.source_file and not len(deps.header_files):
                 _LOGGER.warning(
-                    f"Did not find dependencies for the missing symbol"
-                    " '{missing_symbol}'")
+                    "Did not find dependencies for the missing symbol"
+                    f" '{missing_symbol}'")
                 continue
             _copy_deps_to_dir(deps, out_c_dir, args["coreutils_dir"])
 
