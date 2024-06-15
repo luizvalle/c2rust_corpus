@@ -40,7 +40,7 @@ OBJS := $(SRCS:.c=.o)
 all: clean {{program_name}}
 
 {{program_name}}: $(OBJS)
-	gcc $^ -o \$@
+	gcc $^ -o $@
 
 %.o: %.c
 	gcc $(CFLAGS) -c $< -o $@
@@ -136,6 +136,11 @@ def _copy_header_file(header_filepath: str, dest_path: str) -> None:
     elif "src" in filepath_parts:
         i = filepath_parts.index("src")
         dest_path = os.path.join(dest_path, *filepath_parts[i + 1:-1])
+    if not os.path.exists(dest_path):
+        try:
+            os.makedirs(dest_path)
+        except Exception as e:
+            _LOGGER.error("Could not create the directory {dest_path}")
     _copy(header_filepath, dest_path)
 
 
@@ -151,10 +156,10 @@ def _copy_deps_to_dir(
     for header_file in deps.header_files:
         header_filepath = os.path.join(coreutils_dir, header_file)
         if not os.path.isfile(header_filepath):
-            _LOGGER.error(
+            _LOGGER.warning(
                 f"Could not find the file '{header_filepath}' to copy to"
                 f" '{include_path}'")
-            sys.exit(1)
+            continue
         _copy_header_file(header_filepath, include_path)
 
 
@@ -214,6 +219,10 @@ def main():
         sys.exit(1)
 
     _LOGGER.info(f"Created the '{out_c_dir}' and '{out_rust_dir}' directories")
+
+    _run_command(f"make --directory={args['coreutils_dir']}")
+
+    _LOGGER.info(f"Compiled the source files in {args['coreutils_dir']}")
 
     syms_to_deps = _map_symbols_to_dependencies(
         os.path.join(args["coreutils_dir"], "lib"))
