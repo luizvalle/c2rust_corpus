@@ -174,7 +174,8 @@ def _run_command(command):
 
 def _map_symbols_to_dependencies(dir_to_search: str) -> Dict[str, Dependencies]:
     syms_to_deps = dict()
-    for object_filepath in glob.glob(os.path.join(dir_to_search, "*.o")):
+    for object_filepath in glob.glob(
+            os.path.join(dir_to_search, "**", "*.o"), recursive=True):
         symbols, _ = _run_command(
             "nm --defined-only --extern-only --format=\"just-symbols\""
             f" \"{object_filepath}\"")
