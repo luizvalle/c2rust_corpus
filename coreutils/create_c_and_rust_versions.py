@@ -167,7 +167,7 @@ def _run_command(command):
     try:
         output = subprocess.run(command,
                                 shell=True, capture_output=True, text=True)
-        return output.stdout.lstrip().rstrip()
+        return output.stdout.lstrip().rstrip(), output.returncode
     except subprocess.CalledProcessError as e:
         _LOGGER.error(f"Could not run the command '{command}':\n{str(e)}")
 
@@ -175,7 +175,7 @@ def _run_command(command):
 def _map_symbols_to_dependencies(dir_to_search: str) -> Dict[str, Dependencies]:
     syms_to_deps = dict()
     for object_filepath in glob.glob(os.path.join(dir_to_search, "*.o")):
-        symbols = _run_command(
+        symbols, _ = _run_command(
             "nm --defined-only --extern-only --format=\"just-symbols\""
             f" \"{object_filepath}\"")
         deps = _get_deps(object_filepath)
@@ -225,10 +225,10 @@ def main():
     _LOGGER.info(f"Compiled the source files in {args['coreutils_dir']}")
 
     syms_to_deps = _map_symbols_to_dependencies(
-        os.path.join(args["coreutils_dir"], "lib"))
+        os.path.join(args["coreutils_dir"], "src"))
     syms_to_deps.update(
         _map_symbols_to_dependencies(
-            os.path.join(args["coreutils_dir"], "src")))
+            os.path.join(args["coreutils_dir"], "lib")))
 
     _LOGGER.info("Mapped the symbols defined in coreutils to the dependencies."
                  f" Total number of symbols mapped: {len(syms_to_deps)}")
@@ -258,7 +258,7 @@ def main():
     missing_file_pattern = r".* (.*): No such file or directory"
     i = 1
     while True:
-        make_output = _run_command(
+        make_output, _ = _run_command(
             f"make -i --directory=\"{out_c_dir}\" {args['program_name']} 2>&1")
         missing_symbols = re.findall(undefined_symbol_pattern, make_output)
         missing_files = re.findall(missing_file_pattern, make_output)
@@ -272,7 +272,7 @@ def main():
             break
         if num_missing_files:
             for file in missing_files:
-                filepath = _run_command(
+                filepath, _ = _run_command(
                     f"find {args['coreutils_dir']} -type f -name \"{file}\""
                     " | head -n 1")
                 if not os.path.isfile(filepath):
@@ -292,6 +292,110 @@ def main():
                     f" '{missing_symbol}'")
                 continue
             _copy_deps_to_dir(deps, out_c_dir, args["coreutils_dir"])
+
+    _LOGGER.info("Collected all the dependencies for the C version")
+
+    mk_output, mk_retcode = _run_command(
+        f"make --directory={out_c_dir} {args['program_name']} 2>&1")
+    if mk_retcode:
+        _LOGGER.error(
+            f"Could not build the C version of {args['program_name']}:\n"
+            f"{mk_output}"
+        )
+        sys.exit(1)
+
+    _LOGGER.info(f"Successfully built the C version of {args['program_name']}")
+
+    if shutil.which("intercept-build") is None:
+        sb_install_cmd = "pip install scan-build"
+        _LOGGER.warning(
+            "The intercept-build command, needed to create the Rust version,"
+            " was not found. Attempting to install with"
+            f" `{sb_install_cmd}`"
+        )
+        pip_out, pip_retcode = _run_command(f"{sb_install_cmd} 2>&1")
+        if pip_retcode:
+            _LOGGER.error(f"Failed to run `{sb_install_cmd}`:\n{pip_out}")
+            sys.exit(1)
+        else:
+            _LOGGER.info("Successfully installed intercept-build")
+
+    _run_command(f"make -s --directory={out_c_dir} clean")
+    compilation_db_filepath = os.path.join(out_c_dir, "compile_commands.json")
+    ib_out, ib_retcode = _run_command(
+        f"intercept-build --cdb {compilation_db_filepath}"
+        f" make -s --directory={out_c_dir} {args['program_name']} 2>&1"
+    )
+    if ib_retcode:
+        _LOGGER.error(f"Could not build the compilation database:\n{ib_out}")
+        sys.exit(1)
+
+    if shutil.which("c2rust") is None:
+        _LOGGER.warning(
+            "Did not find the c2rust command, attempting to install it")
+        c2r_install_out, c2r_install_retcode = _run_command(
+            "cargo install c2rust 2>&1")
+        if c2r_install_retcode:
+            _LOGGER.error(f"Could not install c2rust:\n{c2r_install_out}")
+            sys.exit(1)
+        _LOGGER.info("Successfully installed c2rust")
+
+    c2r_out, c2r_retcode = _run_command(
+        f"c2rust transpile --binary {args['program_name']} --overwrite-existing"
+        f" --output-dir={out_rust_dir}"
+        f" {compilation_db_filepath} 2>&1"
+    )
+    if c2r_retcode:
+        _LOGGER.error("Could not transpile the program with c2rust:\n{c2r_out}")
+        sys.exit(1)
+    _LOGGER.info("Successfully transpiled the program with c2rust")
+
+    # Allowing unused imports because the Rust auto fixer removes the
+    # dependency on the library created to contain the helper functions
+    main_rust_src_filepath = os.path.join(
+        out_rust_dir, "src", f"{args['program_name']}.rs")
+    unused_import_out, unused_import_retcode = _run_command(
+        "sed -i 's/^\(#!\[allow([^\)]*\))/\\1, unused_imports)/'"
+        f" {main_rust_src_filepath} 2>&1"
+    )
+    if unused_import_retcode:
+        _LOGGER.error(
+            "Could not add `unused_imports` to the #![allow(...)]` statement"
+            f" in {main_rust_src_filepath}")
+        sys.exit(1)
+
+    # Removing `compile_error!()` calls
+    rm_comp_err_out, rm_comp_err_retcode = _run_command(
+        f"find {os.path.join(out_rust_dir, 'src')} -type f"
+        f" -exec perl -0777 -pi -e 's/compile_error!\((.|\\n)*?\)//g' {{}} +"
+    )
+    if rm_comp_err_retcode:
+        _LOGGER.error(
+            "Could not remove the `compile_error!()` statements from the Rust"
+            " source files")
+        sys.exit(1)
+
+    # Using cargo to automatically fix compile errors
+    cg_fix_out, cg_fix_retcode = _run_command(
+        f"cd {out_rust_dir}"
+        " && cargo fix -Z unstable-options --keep-going --no-default-features"
+        " --broken-code --allow-no-vcs --allow-dirty --allow-staged 2>&1 "
+    )
+    if cg_fix_retcode:
+        _LOGGER.error(f"Running `cargo fix` failed:\n{cg_fix_out}")
+        sys.exit(1)
+
+    _LOGGER.info("Successfully cleaned the Rust version")
+
+    cb_out, cb_retcode = _run_command(f"cd {out_rust_dir} && cargo build 2>&1")
+    if cb_retcode:
+        _LOGGER.error(f"Could not build the Rust version:\n{cb_out}")
+        sys.exit(1)
+    _LOGGER.info(
+        f"Successfully built the Rust version of {args['program_name']}")
+
+    _run_command(f"make --directory={out_c_dir} clean")
+    _run_command(f"cd {out_rust_dir} && cargo clean")
 
 
 if __name__ == "__main__":
