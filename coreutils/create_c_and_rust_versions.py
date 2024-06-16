@@ -35,12 +35,13 @@ _MAKEFILE = f"""\
 CFLAGS=-I./{_INCLUDE_DIR} -g
 SRCS := $(wildcard *.c)
 OBJS := $(SRCS:.c=.o)
+LDFLAGS= -lcrypto -lssl -lgmp
 
 .PHONY: all
 all: clean {{program_name}}
 
 {{program_name}}: $(OBJS)
-	gcc $^ -o $@
+	gcc $^ $(LDFLAGS) -o $@
 
 %.o: %.c
 	gcc $(CFLAGS) -c $< -o $@
@@ -347,7 +348,8 @@ def main():
         f" {compilation_db_filepath} 2>&1"
     )
     if c2r_retcode:
-        _LOGGER.error("Could not transpile the program with c2rust:\n{c2r_out}")
+        _LOGGER.error(
+            f"Could not transpile the program with c2rust:\n{c2r_out}")
         sys.exit(1)
     _LOGGER.info("Successfully transpiled the program with c2rust")
 
