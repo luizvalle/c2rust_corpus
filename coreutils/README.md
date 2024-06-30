@@ -1,3 +1,15 @@
+# C and Rust versions of Coreutils
+
+This directory contains the C and equivalent Rust translations of some coreutils
+programs. The C version was taken from the
+[coreutils mirror](https://github.com/coreutils/coreutils). The Rust version was
+obtained by translating the C version using
+[c2rust](https://www.google.com/search?client=firefox-b-1-d&q=c2rust) (see
+the `create_corpus.sh` script for how this is done).
+
+This directory also contains the end-to-end tests for each program included
+in the coreutils repository (more details below).
+
 ## Directory structure
 
 ### Source code
